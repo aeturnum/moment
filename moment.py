@@ -10,50 +10,11 @@ import sys
 import threading
 from websocket import create_connection
 
+from messages import EuphoriaUser, EuphoriaMessage, EuphoriaPing
+
 users = {}
 messages = {}
 message_trees = []
-
-class EuphoriaUser(object):
-	def __init__(self, name, server_era, user_id, server_id):
-		self.name = name
-		self.id = user_id.split('-')[0]
-		self.id_suffix = user_id.split('-')[0]
-		self.server = {
-			'id':server_id,
-			'era':server_era
-		}
-
-	def __str__(self):
-		return '[{}]'.format(self.name)
-
-class EuphoriaMessage(object):
-	def __init__(self, message_id, timestamp, sender, parent, content):
-		self.id = message_id
-		self.timestamp = int(timestamp)
-		self.sender = sender
-		self.parent = parent
-		self.content = content
-
-	def __lt__(self, other):
-		return self.timestamp < other.timestamp
-
-	def is_emote(self):
-		return self.content.find('/me') == 0
-
-	def urwid_string(self, depth, index=None):
-		local_time = time.localtime(self.timestamp)
-		index_str = ''
-		if index:
-			index_str = '[{}]'.format(index)
-		if self.is_emote():
-			return '{}{}| {}<{}{}>'.format(index_str, time.strftime("%H:%M:%S", local_time), '| '*depth, self.sender.name, self.content.replace('/me', ''))
-		else:
-			return '{}{}| {}{}: {}'.format(index_str, time.strftime("%H:%M:%S", local_time), '| '*depth, self.sender, self.content)
-
-	def __str__(self):
-		local_time = time.localtime(self.timestamp)
-		return '{}|{}: {}'.format(time.strftime("%H:%M:%S", local_time), self.sender, self.content)
 
 class EuphoriaMessageTree(object):
 	def __init__(self, message, depth=0):
@@ -156,13 +117,7 @@ class EuphoriaRoom(object):
 		return s
 			
 
-class EuphoriaPing(object):
-	def __init__(self, sent_time, next_ping):
-		self.sent_time = sent_time
-		self.next_time = next_ping
 
-	def __str__(self):
-		return 'ping[{}]->{}'.format(self.sent_time, self.next_time)
 
 def add_user(user_data):
 	u = EuphoriaUser(user_data['name'], user_data['server_era'], user_data['id'], user_data['server_id'])
@@ -193,14 +148,6 @@ def handle_euphoria_snapshot(messages, users, room):
 	for message in messages:
 		m = add_message(message)
 		room.add_message(m)
-
-class EuphoriaSnapshot(object):
-	def __init__(self, version, log, session_id, listing):
-		self.version = version
-		self.session_id = session_id
-		self.log = log
-		self.listing = listing
-		self._process_data()
 
 def show_or_exit(key):
     if key in ('q', 'Q'):

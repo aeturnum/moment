@@ -1,5 +1,5 @@
 import unittest
-from messages import get_message_object, EuphoriaPing, EuphoriaUser
+from messages import get_message_object, EuphoriaPing, EuphoriaUser, EuphoriaMessage
 import json
 
 class TestMessages(unittest.TestCase):
@@ -54,6 +54,27 @@ class TestMessages(unittest.TestCase):
             self.assertEqual(u.id, expected_id)
 
     def test_message_construction(self):
+        #  '{"id":"","type":"send-event",
+        #     "data":{
+        #        "id":"00arxp1ofjhts",
+        #         "parent":"",
+        #         "time":1426698997,
+        #         "sender":{"id":"d47f41e91c10b34a-00000008","name":"Drex","server_id":"heim.1","server_era":"00awjcddxlkhs"}
+        #         ,"content":"/me waves bye for a bit"}}'
         expected_user = get_message_object(self.sample_user)
+        expected_id = '00arxp1ofjhts'
+        expected_parent = ''
+        expected_time = 1426698997
+        expected_content = '/me waves bye for a bit'
+        message = EuphoriaMessage.create(json.loads(self.sample_send))
+        message2 = get_message_object(self.sample_send)
+        self.assertEqual(message, message2)
+        messages = [message, message2]
+        for m in messages:
+            self.assertEqual(message.id, expected_id)
+            self.assertEqual(message.timestamp, expected_time)
+            self.assertEqual(message.parent, expected_parent)
+            self.assertEqual(message.content, expected_content)
+            self.assertEqual(message.sender, expected_user)
     def tearDown(self):
         pass

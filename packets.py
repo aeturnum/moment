@@ -1,50 +1,25 @@
 import time
 import json
+from models import Server, User
 
-class EuphoriaServer(object):
-    def __init__(self, id, era):
-        self.id = id
-        self.era = era
-    def __eq__(self, other):
-        if hasattr(other, 'era') and hasattr(other, 'id'):
-            return self.id == other.id and self.era == other.era
+class EuphoriaPacket(object):
+    def __init__(self, message):
+        if type(message) is str:
+            message = json.loads(message)
+        if 'id' in message and 'type' in message:
+            self.packet_id = message['id']
+            self.packet_type = message['type']
 
-class EuphoriaUser(object):
-    def __init__(self, name, server_era, user_id, server_id):
-        self.name = name
-        self.id = user_id.split('-')[0]
-        self.session = user_id.split('-')[1]
-        self.server = EuphoriaServer(server_id, server_era)
-
-    def __str__(self):
-        return '[{}]'.format(self.name)
-
-    @staticmethod
-    def create(message):
-        u = EuphoriaUser(
-            message['name'],
-            message['server_era'],
-            message['id'],
-            message['server_id'])
-        return u
-
-    def __eq__(self, other):
-        attrs = ['name', 'id', 'session', 'server']
-        for attr in attrs:
-            if not hasattr(other, attr):
-                return False
-        return self.name == other.name\
-                and self.id == other.id \
-                and self.session == other.session \
-                and self.server == other.server
-
-class EuphoriaMessage(object):
-    def __init__(self, message_id, timestamp, sender, parent, content):
-        self.id = message_id
-        self.timestamp = int(timestamp)
-        self.sender = sender
-        self.parent = parent
-        self.content = content
+class EuphoriaMessage(EuphoriaPacket):
+    def __init__(self, message):
+        super(EuphoriaMessage, self).__init__(message)
+        if 'data' in message:
+            message = message['data']
+        self.message_id = message['id']
+        self.timestamp = message['time']
+        self.sender = User.create(message['sender'])
+        self.parent = message['parent']
+        self.content = message['content']
 
     def __lt__(self, other):
         return self.timestamp < other.timestamp
@@ -79,48 +54,33 @@ class EuphoriaMessage(object):
             self.sender,
             self.content)
 
-    @staticmethod
-    def create(message):
-        if 'data' in message:
-            message = message['data']
-
-        m = EuphoriaMessage(
-                message['id'],
-                message['time'],
-                EuphoriaUser.create(message['sender']),
-                message['parent'],
-                message['content'])
-        return m
-
     def __eq__(self, other):
-        attrs = ['id', 'timestamp', 'sender', 'parent', 'content']
+        attrs = ['message_id', 'timestamp', 'sender', 'parent', 'content']
         for attr in attrs:
             if not hasattr(other, attr):
                 return False
-        return self.id == other.id \
+        return self.message_id == other.message_id \
                and self.timestamp == other.timestamp \
                and self.sender == other.sender \
                and self.parent == other.parent \
                and self.content == other.content
 
-class EuphoriaPing(object):
-    def __init__(self, sent_time, next_ping):
-        self.sent_time = sent_time
-        self.next_time = next_ping
+class EuphoriaNickChange(EuphoriaPacket):
+    pass
+
+class EuphoriaPing(EuphoriaPacket):
+    def __init__(self, message):
+        super(EuphoriaPing, self).__init__(message)
+        if 'data' in message:
+            message = message['data']
+        self.sent_time = message['time']
+        self.next_time = message['next']
 
     def __repr__(self):
         return str(self)
 
     def __str__(self):
         return 'ping[{}]->{}'.format(self.sent_time, self.next_time)
-
-    @staticmethod
-    def create(message):
-        if 'data' in message:
-            message = message['data']
-        p = EuphoriaPing(message['time'], message['next'])
-
-        return p
 
     def __eq__(self, other):
         attrs = ['sent_time', 'next_time']
@@ -130,12 +90,15 @@ class EuphoriaPing(object):
         return self.sent_time == other.sent_time \
                and self.next_time == other.next_time
 
-class EuphoriaSnapshot(object):
-    def __init__(self, version, session_id, log, listing):
-        self.version = version
-        self.session_id = session_id
-        self.log = log
-        self.listing = listing
+class EuphoriaSnapshot(EuphoriaPacket):
+    def __init__(self, message):
+        super(EuphoriaSnapshot, self).__init__(message)
+        if 'data' in message:
+            message = message['data']
+        self.version = message['version']
+        self.session_id = message['session_id']
+        self.log = message['log']
+        self.listing = message['listing']        
         self._users = None
         self._messages = None
 
@@ -155,15 +118,6 @@ class EuphoriaSnapshot(object):
                 self._messages.append(EuphoriaMessage.create(message))
         return self._users
 
-    @staticmethod
-    def create(message):
-        ss = EuphoriaSnapshot(
-            message['data']['version'],
-            message['data']['session_id'],
-            message['data']['log'],
-            message['data']['listing']),
-        return ss
-
 def get_message_object(message):
     type_to_class_map = {
         'ping-event': EuphoriaPing,
@@ -181,10 +135,10 @@ def get_message_object(message):
         if message['type'] in type_to_class_map:
             type_class = type_to_class_map[message['type']]
             if type_class:
-                return type_class.create(message)
+                return type_class(message)
 
     else:
         if 'id' in message and 'name' in message:
-            return EuphoriaUser.create(message)
+            return User.create(message)
 
     return None

@@ -10,7 +10,8 @@ import sys
 import threading
 from websocket import create_connection
 
-from messages import EuphoriaUser, EuphoriaMessage, EuphoriaPing
+from models import User
+from packets import EuphoriaMessage, EuphoriaPing
 
 users = {}
 messages = {}
@@ -120,7 +121,7 @@ class EuphoriaRoom(object):
 
 
 def add_user(user_data):
-	u = EuphoriaUser(user_data['name'], user_data['server_era'], user_data['id'], user_data['server_id'])
+	u = User(user_data['name'], user_data['server_era'], user_data['id'], user_data['server_id'])
 	if u.id not in users:
 		users[u.id] = u
 	return u

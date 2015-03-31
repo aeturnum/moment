@@ -1,5 +1,6 @@
 import unittest
-from messages import get_message_object, EuphoriaPing, EuphoriaUser, EuphoriaMessage
+from models import User
+from packets import get_message_object, EuphoriaPing, EuphoriaMessage
 import json
 
 class TestMessages(unittest.TestCase):
@@ -26,7 +27,7 @@ class TestMessages(unittest.TestCase):
     def test_ping_construction(self):
         expected_sent = 1426697160
         expected_next = 1426697190
-        ping  = EuphoriaPing.create(json.loads(self.sample_ping))
+        ping  = EuphoriaPing(json.loads(self.sample_ping))
         ping2 = get_message_object(self.sample_ping)
         self.assertEqual(ping, ping)
         self.assertEqual(ping, ping2)
@@ -41,7 +42,7 @@ class TestMessages(unittest.TestCase):
         expected_session = '00000008'
         expected_server_id = 'heim.1'
         expected_server_era = '00awjcddxlkhs'
-        user = EuphoriaUser.create(json.loads(self.sample_user))
+        user = User.create(json.loads(self.sample_user))
         user2 = get_message_object(self.sample_user)
         self.assertEqual(user, user)
         self.assertEqual(user, user2)
@@ -66,12 +67,14 @@ class TestMessages(unittest.TestCase):
         expected_parent = ''
         expected_time = 1426698997
         expected_content = '/me waves bye for a bit'
-        message = EuphoriaMessage.create(json.loads(self.sample_send))
+        message = EuphoriaMessage(json.loads(self.sample_send))
         message2 = get_message_object(self.sample_send)
+        print(message)
+        print(message2)
         self.assertEqual(message, message2)
         messages = [message, message2]
         for m in messages:
-            self.assertEqual(message.id, expected_id)
+            self.assertEqual(message.message_id, expected_id)
             self.assertEqual(message.timestamp, expected_time)
             self.assertEqual(message.parent, expected_parent)
             self.assertEqual(message.content, expected_content)

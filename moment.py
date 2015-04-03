@@ -10,8 +10,8 @@ import sys
 import threading
 from websocket import create_connection
 
-from models import User
-from packets import EuphoriaMessage, EuphoriaPing
+from models import User, Message
+from packets import EuphoriaPing, parse_euphoria_packet
 
 users = {}
 messages = {}
@@ -27,7 +27,7 @@ class EuphoriaMessageTree(object):
 		if message.parent == "":
 			raise Exception("Added message to tree that was not at top! {}".format(message))
 		else:
-			if message.parent == self.message.id:
+			if message.parent == self.message.message_id:
 				new_tree = EuphoriaMessageTree(message, self.depth + 1)
 				self.children.append(new_tree)
 				self.children = sorted(self.children)
@@ -62,9 +62,86 @@ class EuphoriaMessageTree(object):
 		return s
 
 class EuphoriaRoom(object):
-	def __init__(self, message_trees):
-		self.trees = message_trees
+	def __init__(self, name):
+		self.name = name
+		self.ws = None
+		self.lock = threading.Lock()
+		self.data_queue = []
+		self.websocket_thread = None
+		self.trees = []
 		self.unprocessed_messages = []
+		self.users = {}
+		self.display_list = urwid.SimpleFocusListWalker([])
+		self.message_id_number = 0
+
+	def __del__(self):
+		if self.ws:
+			self.ws.close()
+		if self.websocket_thread:
+			self.websocket_thread.join(1)
+
+	@staticmethod
+	def check_ws(ws, lock, event, data_queue):
+		while True:
+			new_data = None
+			try:
+				new_data = ws.recv()
+			except:
+				if shutdown_event.is_set():
+					return
+				else:
+					raise
+			lock.acquire()
+			if new_data:
+				data_queue.append(new_data)
+			lock.release()
+			if shutdown_event.is_set():
+				return
+
+	def connect(self, shutdown_event):
+		self.ws = create_connection("wss://euphoria.io/room/{}/ws".format(self.name))
+		self.websocket_thread = threading.Thread(
+			target=EuphoriaRoom.check_ws, 
+			args=(self.ws,self.lock,shutdown_event,self.data_queue,))
+		self.websocket_thread.start()
+
+
+	def process_euphoria_packet(self, packet):
+		packet_object = parse_euphoria_packet(packet)
+		# packet might not be supported yet
+		if packet_object:
+			updated = False
+			for u in packet_object.users:
+				room.add_user(u)
+				#soon
+				#updated = True
+			for m in packet_object.messages:
+				room.add_message(m)
+				updated = True
+
+			if updated:
+				room.update_display()
+
+			if packet_object.packet_type == 'ping-event':
+				ping_reply = {"type":"ping-reply","data":{"time":int(time.time())},"id":str(self.message_id_number)}
+				self.message_id_number += 1
+				self.ws.send(json.dumps(ping_reply))
+
+	# there must be a better way
+	def generate_update_function(self, update_loop):
+		def update():
+			message = None
+			if self.lock.acquire(False):
+				if len(self.data_queue):
+					message = self.data_queue.pop(0)
+				self.lock.release()
+			if message:
+				self.process_euphoria_packet(message)
+
+			if not shutdown_event.is_set():
+				event_loop.alarm(0.1, update)
+
+		return update
 
 	def set_display_list(self, display_list):
 		self.display_list = display_list
@@ -80,6 +157,9 @@ class EuphoriaRoom(object):
 			elements.extend(t.to_urwid())
 
 		return elements
+
+	def add_user(self, user):
+		self.users[user.user_id] = user
 
 	def add_message(self, m):
 		added = False
@@ -118,86 +198,23 @@ class EuphoriaRoom(object):
 		return s
 			
 
-
-
-def add_user(user_data):
-	u = User(user_data['name'], user_data['server_era'], user_data['id'], user_data['server_id'])
-	if u.id not in users:
-		users[u.id] = u
-	return u
-
-def add_message(message_data):
-	u = add_user(message_data['sender'])
-	m = EuphoriaMessage(
-				message_data['id'],
-				message_data['time'],
-				u,
-				message_data['parent'],
-				message_data['content'])	
-	messages[m.id] = m
-	return m
-
-def handle_send_event(event_data, room):
-	m = add_message(event_data)
-	room.add_message(m)
-	room.update_display()
-
-def handle_euphoria_snapshot(messages, users, room):
-	for user in users:
-		add_user(user)
-
-	for message in messages:
-		m = add_message(message)
-		room.add_message(m)
-
 def show_or_exit(key):
     if key in ('q', 'Q'):
         raise urwid.ExitMainLoop()
     txt.set_text(repr(key))
 
-class EuphoriaFactory(object):
-	constructors = {
-		'ping-event': lambda x, y: EuphoriaPing(x['data']['time'], x['data']['next']),
-		#'snapshot-event': lambda x, y: EuphoriaSnapshot(x['data']['version'], x['data']['log'], x['data']['session_id'], x['data']['listing']),
-		'snapshot-event': lambda x, y: handle_euphoria_snapshot(x['data']['log'], x['data']['listing'], y),
-		'send-event': lambda x, y: handle_send_event(x['data'], y),
-		'part-event':lambda x, y: print('part-event')
-	}
-
-	@staticmethod
-	def get_object(websocket_message, room):
-		try:
-			constructor = EuphoriaFactory.constructors[websocket_message['type']]
-		except KeyError:
-			print(json.dumps(websocket_message))
-			raise KeyError("Did not have constructor for {}! \n{}".format(websocket_message['type']))
-		
-		return constructor(websocket_message, room)
-
-def process_euphoria_message(message, list_walker = []):
-	json_data = json.loads(message)
-	if 'id' in json_data:
-		EuphoriaFactory.get_object(json_data, list_walker)
-
-room = 'space'
+room_name = 'space'
 if __name__ == "__main__":
 	if len(sys.argv) > 1:
 		if len(sys.argv) > 2:
 			print("Usage: python3 ./cli_client.py <room name> (default room: space)")
 			sys.exit(1)
-		room = sys.argv[1]
+		room_name = sys.argv[1]
 
-ws = create_connection("wss://euphoria.io/room/{}/ws".format(room))
-
-room = EuphoriaRoom([])
-
-list_walker =	urwid.SimpleFocusListWalker([])
-room.set_display_list(list_walker)
+room = EuphoriaRoom(room_name)
 
 event_loop = urwid.SelectEventLoop()
 
-ws_data = []
-lock = threading.Lock()
 shutdown_event = threading.Event()
 
 exit_button = urwid.Button('Exit')
@@ -205,55 +222,21 @@ exit_button = urwid.Button('Exit')
 def exit_program(button):
 	shutdown_event.set()
 	exit_button.set_label("Exiting program.....")
-	ws.close()
 	raise urwid.ExitMainLoop()
 
 def exit_on_q(key):
 	if key in ('q', 'Q'):
 		exit_program(None)
 
-
-def check_ws(ws, lock, event):
-	while True:
-		new_data = None
-		try:
-			new_data = ws.recv()
-		except:
-			if shutdown_event.is_set():
-				pass
-			else:
-				raise
-		lock.acquire()
-		if new_data:
-			ws_data.append(new_data)
-		lock.release()
-		if shutdown_event.is_set():
-			break
-
-t = threading.Thread(target=check_ws, args=(ws,lock,shutdown_event,))
-
-
-def update():
-	message = None
-	if lock.acquire(False):
-		if len(ws_data):
-			message = ws_data.pop(0)
-		lock.release()
-	if message:
-		process_euphoria_message(message, room)
-		del list_walker[:]
-		list_walker.extend(room.element_list())
-
-	if not shutdown_event.is_set():
-		event_loop.alarm(0.1, update)
-
+room.connect(shutdown_event)
+update = room.generate_update_function(event_loop)
 
 event_loop.alarm(0.1, update)
 
 urwid.connect_signal(exit_button, 'click', exit_program)
 
-header = urwid.AttrWrap(urwid.Text("Euphoria"), 'header')
-listbox = urwid.ListBox(list_walker)
+header = urwid.AttrWrap(urwid.Text("Euphoria - {}".format(room.name)), 'header')
+listbox = urwid.ListBox(room.display_list)
 footer = urwid.AttrWrap(exit_button, 'footer')
 frame = urwid.Frame(urwid.AttrWrap(listbox, 'body'), header=header, footer=footer)
 
@@ -263,8 +246,4 @@ palette = [
     ('bg', 'black', 'dark blue'),]
 screen = urwid.raw_display.Screen()
 
-t.start()
 urwid.MainLoop(frame, palette, screen, event_loop=event_loop, unhandled_input=exit_on_q).run()
-
-ws.close()
-t.join(1)

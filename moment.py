@@ -8,6 +8,8 @@ import time
 import urwid
 import sys
 import threading
+from queue import Queue
+
 from websocket import create_connection
 
 from models import User, Message
@@ -66,7 +68,8 @@ class EuphoriaRoom(object):
 		self.name = name
 		self.ws = None
 		self.lock = threading.Lock()
-		self.data_queue = []
+		self.server_packets = Queue()
+		self.packets_to_send = Queue()
 		self.websocket_thread = None
 		self.trees = []
 		self.unprocessed_messages = []
@@ -81,28 +84,30 @@ class EuphoriaRoom(object):
 			self.websocket_thread.join(1)
 
 	@staticmethod
-	def check_ws(ws, lock, event, data_queue):
+	def check_ws(ws, event, packets_from_server, packets_to_send):
 		while True:
 			new_data = None
+			if not packets_to_send.empty():
+				send_packet = packets_to_send.get(False)
+				if send_packet:
+					ws.send(send_packet)
 			try:
 				new_data = ws.recv()
 			except:
-				if shutdown_event.is_set():
+				if event.is_set():
 					return
 				else:
 					raise
-			lock.acquire()
 			if new_data:
-				data_queue.append(new_data)
-			lock.release()
-			if shutdown_event.is_set():
+				packets_from_server.put(new_data, True)
+			if event.is_set():
 				return
 
 	def connect(self, shutdown_event):
 		self.ws = create_connection("wss://euphoria.io/room/{}/ws".format(self.name))
 		self.websocket_thread = threading.Thread(
 			target=EuphoriaRoom.check_ws, 
-			args=(self.ws,self.lock,shutdown_event,self.data_queue,))
+			args=(self.ws,shutdown_event,self.server_packets,self.packets_to_send,))
 		self.websocket_thread.start()
 
 
@@ -125,16 +130,14 @@ class EuphoriaRoom(object):
 			if packet_object.packet_type == 'ping-event':
 				ping_reply = {"type":"ping-reply","data":{"time":int(time.time())},"id":str(self.message_id_number)}
 				self.message_id_number += 1
-				self.ws.send(json.dumps(ping_reply))
+				self.packets_to_send.put(json.dumps(ping_reply), True) 
 
 	# there must be a better way
 	def generate_update_function(self, update_loop):
 		def update():
 			message = None
-			if self.lock.acquire(False):
-				if len(self.data_queue):
-					message = self.data_queue.pop(0)
-				self.lock.release()
+			if not self.server_packets.empty():
+				message = self.server_packets.get()
 			if message:
 				self.process_euphoria_packet(message)
 
